@@ -28,10 +28,13 @@ struct StandView: View {
     @State private var index = 0
     /// Numbers or the chart as printed; remembered between setlists.
     @AppStorage("showOriginal") private var showOriginal = false
+    @State private var editingSequence: SharedSlot?
 
     var body: some View {
         VStack(spacing: 0) {
             topBar
+            // Shown above the page so it never covers the chart; tap it to change the sequence.
+            sequenceStrip
             if !pages.isEmpty {
                 PageReader(pages: pages, store: store, original: showOriginal, index: $index, ink: ink)
                     .ignoresSafeArea(edges: .bottom)
@@ -49,11 +52,17 @@ struct StandView: View {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-markup") { ink.isMarkingUp = true }
             if ProcessInfo.processInfo.arguments.contains("-original") { showOriginal = true }
+            if ProcessInfo.processInfo.arguments.contains("-editSequence") { editingSequence = pages.first?.slot }
             #endif
             // A music stand shouldn't dim mid-song.
             UIApplication.shared.isIdleTimerDisabled = true
         }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        .sheet(item: $editingSequence) { slot in
+            SequenceEditor(title: slot.title, shared: slot.sequence ?? "", current: store.sequence(for: slot, in: setlist)) {
+                store.setSequence($0, for: slot, in: setlist)
+            }
+        }
     }
 
     private var current: StandPage? { pages.indices.contains(index) ? pages[index] : nil }
@@ -126,6 +135,44 @@ struct StandView: View {
     }
 
     private var hasOriginals: Bool { setlist.songs.contains { $0.hasOriginal == true } }
+
+    private var sequenceStrip: some View {
+        let slot = current?.slot
+        let steps = slot.map { SequenceStep.parse(store.sequence(for: $0, in: setlist)) } ?? []
+        let edited = slot.map { store.isSequenceEdited($0, in: setlist) } ?? false
+        return Button { editingSequence = slot } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.triangle.turn.up.right.diamond")
+                    .foregroundStyle(Theme.lime.opacity(steps.isEmpty ? 0.35 : 1))
+                if steps.isEmpty {
+                    Text("No sequence · tap to add").foregroundStyle(Color.white.opacity(0.4))
+                } else {
+                    Text(steps.map(\.label).joined(separator: "  →  "))
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.6)
+                }
+                Spacer(minLength: 0)
+                if edited {
+                    Text("Changed on iPad")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Theme.lime)
+                }
+                Image(systemName: "pencil")
+                    .foregroundStyle(Color.white.opacity(0.5))
+            }
+            .font(.system(size: 18, weight: .semibold, design: .rounded))
+            .padding(.horizontal, 18)
+            .frame(height: 50)
+            .frame(maxWidth: .infinity)
+            .background(Color.black.opacity(0.55))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(slot == nil || ink.isMarkingUp)
+        .accessibilityLabel(steps.isEmpty ? "No sequence. Edit sequence" : "Sequence: \(steps.map(\.label).joined(separator: ", ")). Edit sequence")
+    }
 
     /// "123" shows the Nashville numbers, "ABC" the chart as printed.
     private var chartToggle: some View {

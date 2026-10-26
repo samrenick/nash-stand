@@ -9,6 +9,8 @@ struct SharedSlot: Codable, Identifiable, Hashable {
     let pageCount: Int
     /// Whether the chart as printed, without numbers, came along. Missing from older shares.
     let hasOriginal: Bool?
+    /// The road map for this setlist, like "Intro, V1, C×2, B, Tag, End". Missing from older shares.
+    let sequence: String?
 
     var hasChart: Bool { !songId.isEmpty }
 }
