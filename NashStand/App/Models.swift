@@ -7,6 +7,8 @@ struct SharedSlot: Codable, Identifiable, Hashable {
     let title: String
     let key: String
     let pageCount: Int
+    /// Whether the chart as printed, without numbers, came along. Missing from older shares.
+    let hasOriginal: Bool?
 
     var hasChart: Bool { !songId.isEmpty }
 }

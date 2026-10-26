@@ -4,6 +4,7 @@ import PencilKit
 /// Everything on the iPad lives in Documents, so it works with no Mac in sight:
 ///   Setlists/<id>.json        downloaded setlists
 ///   Charts/<songId>.pdf       charts with Nashville numbers, as rendered on the Mac
+///   Charts/<songId>.original.pdf   the same charts as printed, without numbers
 ///   Ink/<songId>/<page>.ink   handwriting, kept per song so it follows a chart into every setlist
 @MainActor
 final class Store: ObservableObject {
@@ -31,12 +32,23 @@ final class Store: ObservableObject {
 
     func chartURL(songId: String) -> URL { chartsDir.appendingPathComponent("\(songId).pdf") }
 
-    /// Saves a downloaded setlist. charts maps song IDs to freshly downloaded PDFs.
-    func save(_ setlist: SharedSetlist, charts: [String: URL]) throws {
+    func originalURL(songId: String) -> URL { chartsDir.appendingPathComponent("\(songId).original.pdf") }
+
+    /// The chart to show for a slot: the original when asked for and available, otherwise the numbered one.
+    func chartURL(for slot: SharedSlot, original: Bool) -> URL {
+        let url = originalURL(songId: slot.songId)
+        return original && files.fileExists(atPath: url.path) ? url : chartURL(songId: slot.songId)
+    }
+
+    /// Saves a downloaded setlist. charts and originals map song IDs to freshly downloaded PDFs.
+    func save(_ setlist: SharedSetlist, charts: [String: URL], originals: [String: URL] = [:]) throws {
         for (songId, downloaded) in charts {
-            let destination = chartURL(songId: songId)
-            try? files.removeItem(at: destination)
-            try files.moveItem(at: downloaded, to: destination)
+            try replace(chartURL(songId: songId), with: downloaded)
+            // A resend without an original shouldn't leave a stale one behind.
+            if originals[songId] == nil { try? files.removeItem(at: originalURL(songId: songId)) }
+        }
+        for (songId, downloaded) in originals {
+            try replace(originalURL(songId: songId), with: downloaded)
         }
         try JSONEncoder().encode(setlist).write(to: manifestURL(setlist.id), options: .atomic)
         reload()
@@ -49,7 +61,13 @@ final class Store: ObservableObject {
         let inUse = Set(setlists.flatMap { $0.songs.map(\.songId) })
         for slot in setlist.songs where slot.hasChart && !inUse.contains(slot.songId) {
             try? files.removeItem(at: chartURL(songId: slot.songId))
+            try? files.removeItem(at: originalURL(songId: slot.songId))
         }
+    }
+
+    private func replace(_ destination: URL, with downloaded: URL) throws {
+        try? files.removeItem(at: destination)
+        try files.moveItem(at: downloaded, to: destination)
     }
 
     func ink(songId: String, page: Int) -> PKDrawing {

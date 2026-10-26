@@ -26,12 +26,14 @@ struct StandView: View {
     @StateObject private var ink = InkSettings()
     @State private var pages: [StandPage] = []
     @State private var index = 0
+    /// Numbers or the chart as printed; remembered between setlists.
+    @AppStorage("showOriginal") private var showOriginal = false
 
     var body: some View {
         VStack(spacing: 0) {
             topBar
             if !pages.isEmpty {
-                PageReader(pages: pages, store: store, index: $index, ink: ink)
+                PageReader(pages: pages, store: store, original: showOriginal, index: $index, ink: ink)
                     .ignoresSafeArea(edges: .bottom)
             } else {
                 Spacer()
@@ -46,6 +48,7 @@ struct StandView: View {
             pages = StandPage.pages(for: setlist, store: store)
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-markup") { ink.isMarkingUp = true }
+            if ProcessInfo.processInfo.arguments.contains("-original") { showOriginal = true }
             #endif
             // A music stand shouldn't dim mid-song.
             UIApplication.shared.isIdleTimerDisabled = true
@@ -62,10 +65,14 @@ struct StandView: View {
 
     private var topBar: some View {
         HStack(spacing: 10) {
-            Button { dismiss() } label: {
-                Label("Setlists", systemImage: "chevron.left").font(.body.weight(.semibold))
+            HStack(spacing: 12) {
+                Button { dismiss() } label: {
+                    Label("Setlists", systemImage: "chevron.left").font(.body.weight(.semibold))
+                }
+                if hasOriginals { chartToggle }
             }
-            .frame(minWidth: 110, alignment: .leading)
+            .fixedSize()
+            .frame(minWidth: 210, alignment: .leading)
 
             Spacer(minLength: 0)
             barButton("chevron.left", label: "Previous page") { index = max(0, index - 1) }
@@ -83,7 +90,8 @@ struct StandView: View {
                     .background(ink.isMarkingUp ? Theme.lime : Color.white.opacity(0.12), in: Capsule())
                     .foregroundStyle(ink.isMarkingUp ? Theme.green : Color.white)
             }
-            .frame(minWidth: 110, alignment: .trailing)
+            .fixedSize()
+            .frame(minWidth: 210, alignment: .trailing)
         }
         .padding(.horizontal, 14)
         .frame(height: 56)
@@ -112,9 +120,30 @@ struct StandView: View {
                         .lineLimit(1)
                 }
             }
-            .frame(minWidth: 220, maxWidth: 360)
+            .frame(minWidth: 160, maxWidth: 360)
             .foregroundStyle(.white)
         }
+    }
+
+    private var hasOriginals: Bool { setlist.songs.contains { $0.hasOriginal == true } }
+
+    /// "123" shows the Nashville numbers, "ABC" the chart as printed.
+    private var chartToggle: some View {
+        HStack(spacing: 0) {
+            ForEach([false, true], id: \.self) { original in
+                Button { showOriginal = original } label: {
+                    Text(original ? "ABC" : "123")
+                        .font(.subheadline.weight(.bold).monospaced())
+                        .frame(width: 44, height: 32)
+                        .background(showOriginal == original ? Theme.lime : Color.clear, in: Capsule())
+                        .foregroundStyle(showOriginal == original ? Theme.green : Color.white)
+                }
+                .accessibilityLabel(original ? "Original chords" : "Nashville numbers")
+                .accessibilityAddTraits(showOriginal == original ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(Color.white.opacity(0.12), in: Capsule())
     }
 
     private func subtitle(for page: StandPage) -> String {

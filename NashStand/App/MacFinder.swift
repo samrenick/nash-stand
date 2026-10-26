@@ -128,17 +128,24 @@ final class MacFinder: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
             var charts: [String: URL] = [:]
+            var originals: [String: URL] = [:]
             for slot in setlist.songs where slot.hasChart && charts[slot.songId] == nil {
-                let url = baseURL.appendingPathComponent("api/setlists/\(setlist.id)/songs/\(slot.songId).pdf")
-                let (data, response) = try await session.data(from: url)
-                guard (response as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { throw URLError(.badServerResponse) }
-                let file = staging.appendingPathComponent("\(slot.songId).pdf")
-                try data.write(to: file)
-                charts[slot.songId] = file
+                let songURL = baseURL.appendingPathComponent("api/setlists/\(setlist.id)/songs/\(slot.songId)")
+                charts[slot.songId] = try await fetch(songURL.appendingPathExtension("pdf"), to: staging.appendingPathComponent("\(slot.songId).pdf"))
+                if slot.hasOriginal == true {
+                    originals[slot.songId] = try await fetch(songURL.appendingPathComponent("original.pdf"), to: staging.appendingPathComponent("\(slot.songId).original.pdf"))
+                }
             }
-            try store.save(setlist, charts: charts)
+            try store.save(setlist, charts: charts, originals: originals)
         } catch {
             self.error = "Couldn’t download “\(setlist.title)”. Make sure Nash is open on the Mac, then try again."
         }
+    }
+
+    private func fetch(_ url: URL, to file: URL) async throws -> URL {
+        let (data, response) = try await session.data(from: url)
+        guard (response as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { throw URLError(.badServerResponse) }
+        try data.write(to: file)
+        return file
     }
 }

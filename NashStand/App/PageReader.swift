@@ -6,6 +6,8 @@ import SwiftUI
 struct PageReader: UIViewControllerRepresentable {
     let pages: [StandPage]
     let store: Store
+    /// Show charts as printed instead of with numbers.
+    let original: Bool
     @Binding var index: Int
     @ObservedObject var ink: InkSettings
 
@@ -26,7 +28,9 @@ struct PageReader: UIViewControllerRepresentable {
         if (controller.dataSource == nil) != ink.isMarkingUp {
             controller.dataSource = ink.isMarkingUp ? nil : coordinator
         }
-        if let shown = controller.viewControllers?.first as? PageController, shown.index != index {
+        if let shown = controller.viewControllers?.first as? PageController, shown.original != original {
+            controller.setViewControllers([coordinator.page(at: index)], direction: .forward, animated: false)
+        } else if let shown = controller.viewControllers?.first as? PageController, shown.index != index {
             controller.setViewControllers([coordinator.page(at: index)], direction: index > shown.index ? .forward : .reverse, animated: true)
         }
         coordinator.applyInk(to: controller)
@@ -39,7 +43,7 @@ struct PageReader: UIViewControllerRepresentable {
         init(_ parent: PageReader) { self.parent = parent }
 
         func page(at index: Int) -> PageController {
-            let page = PageController(index: index, page: parent.pages[index], store: parent.store)
+            let page = PageController(index: index, page: parent.pages[index], store: parent.store, original: parent.original)
             page.onTurn = { [weak self] delta in self?.turn(delta) }
             page.ink = parent.ink
             return page
@@ -101,11 +105,14 @@ final class StandPageViewController: UIPageViewController {
 final class PageController: UIViewController, PKCanvasViewDelegate {
     let index: Int
     let page: StandPage
+    let original: Bool
     private let store: Store
+    private let chartURL: URL
     weak var ink: InkSettings?
     var onTurn: ((Int) -> Void)?
 
     private let paper = UIImageView()
+    private let keyTag = KeyTag()
     private let canvas = PKCanvasView()
     private var pageSize = CGSize(width: 612, height: 792)
     /// The handwriting in PDF points; the canvas holds it scaled to the screen.
@@ -120,10 +127,12 @@ final class PageController: UIViewController, PKCanvasViewDelegate {
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
 
-    init(index: Int, page: StandPage, store: Store) {
+    init(index: Int, page: StandPage, store: Store, original: Bool) {
         self.index = index
         self.page = page
+        self.original = original
         self.store = store
+        chartURL = store.chartURL(for: page.slot, original: original)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -139,7 +148,7 @@ final class PageController: UIViewController, PKCanvasViewDelegate {
             showPlaceholder()
             return
         }
-        if let pdfPage = PDFDocument(url: store.chartURL(songId: page.slot.songId))?.page(at: page.page) {
+        if let pdfPage = PDFDocument(url: chartURL)?.page(at: page.page) {
             let box = pdfPage.bounds(for: .cropBox)
             pageSize = pdfPage.rotation % 180 == 0 ? box.size : CGSize(width: box.height, height: box.width)
         }
@@ -163,6 +172,11 @@ final class PageController: UIViewController, PKCanvasViewDelegate {
         paper.layer.shadowRadius = 12
         view.addSubview(paper)
 
+        // The key sits at the top of every page, under any handwriting.
+        keyTag.text = page.slot.key.isEmpty ? nil : "Key of \(page.slot.key)"
+        keyTag.isHidden = page.slot.key.isEmpty
+        view.addSubview(keyTag)
+
         canvas.backgroundColor = .clear
         canvas.isOpaque = false
         // Keep ink colors exact; PencilKit would otherwise invert dark ink in dark mode.
@@ -184,6 +198,7 @@ final class PageController: UIViewController, PKCanvasViewDelegate {
         let frame = CGRect(x: area.midX - size.width / 2, y: area.midY - size.height / 2, width: size.width, height: size.height)
         paper.frame = frame
         paper.layer.shadowPath = UIBezierPath(rect: paper.bounds).cgPath
+        keyTag.place(in: frame)
         canvas.frame = frame
         if abs(fit - scale) > 0.0001 {
             scale = fit
@@ -202,7 +217,7 @@ final class PageController: UIViewController, PKCanvasViewDelegate {
 
     private func render(size: CGSize) {
         renderedSize = size
-        let url = store.chartURL(songId: page.slot.songId)
+        let url = chartURL
         let pageNumber = page.page
         let pixels = CGSize(width: size.width * traitCollection.displayScale, height: size.height * traitCollection.displayScale)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -299,4 +314,36 @@ final class PageController: UIViewController, PKCanvasViewDelegate {
         view.addSubview(stack)
         NSLayoutConstraint.activate([stack.centerXAnchor.constraint(equalTo: view.centerXAnchor), stack.centerYAnchor.constraint(equalTo: view.centerYAnchor)])
     }
+}
+
+/// "Key of F" in a pill, pinned to the top right corner of a chart page.
+final class KeyTag: UILabel {
+    private let inset = UIEdgeInsets(top: 4, left: 10, bottom: 4, right: 10)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        textColor = .white
+        backgroundColor = UIColor(red: 0x1F / 255, green: 0x4D / 255, blue: 0x3A / 255, alpha: 0.92)
+        layer.masksToBounds = true
+        isUserInteractionEnabled = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// Sizes the tag to the page, so it reads the same in portrait and landscape.
+    func place(in page: CGRect) {
+        font = .systemFont(ofSize: max(12, page.width * 0.019), weight: .bold)
+        let size = intrinsicContentSize
+        // Tucked into the corner, where charts leave margin, so it rarely touches a logo or title.
+        let margin = page.width * 0.012
+        frame = CGRect(x: page.maxX - margin - size.width, y: page.minY + margin, width: size.width, height: size.height)
+        layer.cornerRadius = size.height / 2
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let size = super.intrinsicContentSize
+        return CGSize(width: size.width + inset.left + inset.right, height: size.height + inset.top + inset.bottom)
+    }
+
+    override func drawText(in rect: CGRect) { super.drawText(in: rect.inset(by: inset)) }
 }
